@@ -1,0 +1,224 @@
+import flet as ft
+import requests
+import os
+
+URL_API = "https://script.google.com/macros/s/AKfycbyDJqZ-5oQKnLmgyCnsBtkq9lrGteRwhqDZBzPDJl618XT48BadT0OUmMhvKAH4Gess/exec"
+
+def main(page: ft.Page):
+    page.title = "Mis Gastos Personales"
+    page.theme_mode = "dark"
+    page.vertical_alignment = "center"
+    page.horizontal_alignment = "center"
+    page.padding = 20
+
+    monto_input = ft.TextField(label="Monto ($)", keyboard_type="number", width=300)
+    categoria_dropdown = ft.Dropdown(
+        label="Categoria",
+        width=300,
+        options=[
+            ft.dropdown.Option("Compras"),
+            ft.dropdown.Option("Iglesia"),
+            ft.dropdown.Option("Gastos Personales"),
+            ft.dropdown.Option("Salidas"),
+            ft.dropdown.Option("Transporte"),
+            ft.dropdown.Option("Universidad"),
+            ft.dropdown.Option("Otros"),
+        ]
+    )
+    descripcion_input = ft.TextField(label="Descripcion", width=300)
+    chk_4x1000 = ft.Checkbox(label="Aplica impuesto 4x1000?", value=False)
+    status_text = ft.Text(value="", size=14)
+
+    def enviar_gasto(e):
+        if not monto_input.value or not categoria_dropdown.value:
+            status_text.value = "Llena el Monto y la Categoria."
+            status_text.color = "red"
+            page.update()
+            return
+        status_text.value = "Enviando gasto..."
+        status_text.color = "blue"
+        page.update()
+        monto = float(monto_input.value)
+        impuesto = round(monto * 4 / 1000, 2) if chk_4x1000.value else 0
+        payload = {
+            "monto": monto,
+            "categoria": categoria_dropdown.value,
+            "descripcion": descripcion_input.value or "",
+            "aplica4x1000": chk_4x1000.value,
+            "valor4x1000": impuesto
+        }
+        try:
+            response = requests.post(URL_API, json=payload, timeout=30)
+            if response.status_code == 200:
+                status_text.value = f"Gasto guardado! Impuesto: ${impuesto}"
+                status_text.color = "green"
+                monto_input.value = ""
+                categoria_dropdown.value = None
+                descripcion_input.value = ""
+                chk_4x1000.value = False
+            else:
+                status_text.value = f"Error: {response.status_code}"
+                status_text.color = "red"
+        except:
+            status_text.value = "Error de conexion."
+            status_text.color = "red"
+        page.update()
+
+    vista_formulario = ft.Column(
+        controls=[
+            ft.Container(height=10),
+            ft.Text("Mi Control de Gastos", size=24, weight="bold"),
+            ft.Container(height=15),
+            monto_input,
+            ft.Container(height=5),
+            categoria_dropdown,
+            ft.Container(height=5),
+            descripcion_input,
+            ft.Container(height=5),
+            chk_4x1000,
+            ft.Container(height=20),
+            ft.Button("Guardar Gasto", on_click=enviar_gasto, width=300),
+            ft.Container(height=15),
+            status_text,
+        ],
+        horizontal_alignment="center",
+        visible=True
+    )
+
+    lista_gastos = ft.Column(controls=[], horizontal_alignment="center", spacing=5)
+    total_text = ft.Text("", size=16, weight="bold")
+    resumen_col = ft.Column(controls=[], spacing=8)
+
+    COLORES = {
+        "Compras": "blue",
+        "Iglesia": "purple",
+        "Gastos Personales": "orange",
+        "Salidas": "pink",
+        "Transporte": "teal",
+        "Universidad": "green",
+        "Otros": "grey",
+    }
+
+    def cargar_historial(e=None):
+        lista_gastos.controls.clear()
+        resumen_col.controls.clear()
+        total_text.value = "Cargando..."
+        page.update()
+        try:
+            r = requests.get(URL_API, timeout=10)
+            datos = r.json()
+            if not datos:
+                total_text.value = "Sin gastos registrados."
+                page.update()
+                return
+
+            totales = {}
+            gran_total = 0
+            for item in datos:
+                cat = item.get("categoria", "Otros")
+                monto = item.get("monto", 0)
+                fecha = item.get("fecha", "")
+                desc = item.get("descripcion", "")
+                totales[cat] = totales.get(cat, 0) + monto
+                gran_total += monto
+                color = COLORES.get(cat, "grey")
+                lista_gastos.controls.append(
+                    ft.Container(
+                        content=ft.Row(
+                            controls=[
+                                ft.Container(bgcolor=color, width=8, height=40, border_radius=4),
+                                ft.Column(
+                                    controls=[
+                                        ft.Text(f"{cat} - ${monto:,.0f}", size=14, weight="bold"),
+                                        ft.Text(f"{fecha}  {desc}", size=11, color="grey"),
+                                    ],
+                                    spacing=2
+                                )
+                            ],
+                            spacing=10
+                        ),
+                        padding=8,
+                        border_radius=8,
+                        bgcolor="#1e1e2e",
+                        width=340
+                    )
+                )
+
+            max_val = max(totales.values()) if totales else 1
+            for cat, total in sorted(totales.items(), key=lambda x: -x[1]):
+                color = COLORES.get(cat, "grey")
+                pct = int((total / max_val) * 200)
+                porcentaje = round((total / gran_total) * 100, 1)
+                resumen_col.controls.append(
+                    ft.Column(
+                        controls=[
+                            ft.Row(
+                                controls=[
+                                    ft.Text(cat, size=13, width=130),
+                                    ft.Container(bgcolor=color, width=pct, height=22, border_radius=4),
+                                    ft.Text(f"${total:,.0f} ({porcentaje}%)", size=12),
+                                ],
+                                spacing=8
+                            )
+                        ]
+                    )
+                )
+
+            total_text.value = f"Total gastado: ${gran_total:,.0f}"
+        except Exception as ex:
+            total_text.value = f"Error al cargar: {ex}"
+        page.update()
+
+    vista_historial = ft.Column(
+        controls=[
+            ft.Container(height=10),
+            ft.Text("Historial y Estadisticas", size=22, weight="bold"),
+            ft.Container(height=5),
+            ft.Button("Actualizar", on_click=cargar_historial, width=200),
+            ft.Container(height=10),
+            total_text,
+            ft.Divider(),
+            ft.Text("Por categoria:", size=15, weight="bold"),
+            resumen_col,
+            ft.Divider(),
+            ft.Text("Ultimos gastos:", size=15, weight="bold"),
+            lista_gastos,
+        ],
+        horizontal_alignment="center",
+        visible=False,
+        scroll="auto",
+    )
+
+    def mostrar_vista(idx):
+        vista_formulario.visible = (idx == 0)
+        vista_historial.visible = (idx == 1)
+        if idx == 1:
+            cargar_historial()
+        page.update()
+
+    nav = ft.Row(
+        controls=[
+            ft.TextButton("Registrar Gasto", on_click=lambda e: mostrar_vista(0)),
+            ft.TextButton("Ver Reportes", on_click=lambda e: mostrar_vista(1)),
+        ],
+        alignment="center"
+    )
+
+    page.add(
+        ft.Column(
+            controls=[vista_formulario, vista_historial],
+            expand=True,
+            horizontal_alignment="center",
+            scroll="auto"
+        ),
+        nav
+    )
+
+if __name__ == "__main__":
+    
+    if "PORT" in os.environ:
+        puerto = int(os.environ.get("PORT", 7860))
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, host="0.0.0.0", port=puerto)
+    else:
+       
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
